@@ -1,8 +1,9 @@
+import { useRef } from "react";
 import { ViewportCanvas } from "@/components/canvas/ViewportCanvas";
 import { useAppStore, type ZoomMode } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { ExportPanel } from "@/components/layout/ExportPanel";
-import { Download } from "lucide-react";
+import { Download, Upload, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ZOOM_LEVELS: { id: ZoomMode; label: string }[] = [
@@ -16,8 +17,18 @@ export function CenterViewport() {
   const zoom = useAppStore((s) => s.zoom);
   const setZoom = useAppStore((s) => s.setZoom);
   const stats = useAppStore((s) => s.stats);
+  const video = useAppStore((s) => s.video);
+  const loadVideo = useAppStore((s) => s.loadVideo);
+  const clearVideo = useAppStore((s) => s.clearVideo);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scale = zoom === "fit" ? 1 : Number(zoom) / 100;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) void loadVideo(file);
+  };
 
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col bg-[#0d0d10]">
@@ -36,6 +47,29 @@ export function CenterViewport() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10.5px] text-muted-foreground">Drag to pan · Scroll to zoom</span>
+          <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
+          {video.frames ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              onClick={clearVideo}
+              title="Quitar video y volver a la escena de referencia"
+            >
+              <X className="h-3 w-3" /> Quitar video
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              disabled={video.loading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="h-3 w-3" />
+              {video.loading ? `Cargando ${Math.round(video.progress * 100)}%` : "Cargar video"}
+            </Button>
+          )}
           <ExportPanel
             trigger={
               <Button variant="accent" size="sm" className="gap-1.5">
@@ -64,7 +98,14 @@ export function CenterViewport() {
           <div>Frame {stats.frame}</div>
           <div className="capitalize">Effect: {stats.effect}</div>
           <div>GPU {stats.gpuFrameTimeMs}ms</div>
+          {video.frames && <div className="text-accent">Video: {video.frames.length} frames</div>}
         </div>
+
+        {video.error && (
+          <div className="pointer-events-none absolute right-3 top-3 max-w-xs rounded-md border border-destructive/50 bg-panel/95 px-2.5 py-2 text-[11px] text-destructive shadow-floating">
+            {video.error}
+          </div>
+        )}
       </div>
     </div>
   );

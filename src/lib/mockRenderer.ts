@@ -27,6 +27,8 @@ export class MockRenderer {
   private fps = 0;
   private onStats?: (s: ViewportOverlayStats) => void;
   private t0 = performance.now();
+  private sourceFrames: ImageBitmap[] | null = null;
+  private sourceFrameIndex = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -37,6 +39,38 @@ export class MockRenderer {
 
   setStatsListener(fn: (s: ViewportOverlayStats) => void) {
     this.onStats = fn;
+  }
+
+  /**
+   * Provee (o quita, pasando null) los frames decodificados de un video para
+   * usarlos como fuente de imagen en lugar de la escena sintética. El audio
+   * nunca pasa por acá — solo frames ya extraídos como ImageBitmap.
+   */
+  setSourceFrames(frames: ImageBitmap[] | null) {
+    this.sourceFrames = frames;
+    this.sourceFrameIndex = 0;
+  }
+
+  get hasSourceFrames() {
+    return !!this.sourceFrames?.length;
+  }
+
+  setSourceFrameIndex(index: number) {
+    if (!this.sourceFrames?.length) return;
+    const n = this.sourceFrames.length;
+    this.sourceFrameIndex = ((Math.floor(index) % n) + n) % n;
+  }
+
+  private get currentSourceFrame(): ImageBitmap | null {
+    if (!this.sourceFrames?.length) return null;
+    return this.sourceFrames[this.sourceFrameIndex] ?? null;
+  }
+
+  private drawCover(ctx: CanvasRenderingContext2D, img: CanvasImageSource, sw: number, sh: number, w: number, h: number) {
+    const scale = Math.max(w / sw, h / sh);
+    const dw = sw * scale;
+    const dh = sh * scale;
+    ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
   }
 
   setEffect(effect: EffectId, params: EffectParams) {
@@ -133,6 +167,13 @@ export class MockRenderer {
 
   private baseScene(w: number, h: number, t: number) {
     const ctx = this.ctx;
+    const source = this.currentSourceFrame;
+    if (source) {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, w, h);
+      this.drawCover(ctx, source, source.width, source.height, w, h);
+      return;
+    }
     const grad = ctx.createLinearGradient(0, 0, w, h);
     grad.addColorStop(0, "#1b3a44");
     grad.addColorStop(1, "#0b0b0e");
@@ -160,13 +201,20 @@ export class MockRenderer {
     off.width = cols;
     off.height = rows;
     const octx = off.getContext("2d")!;
-    const t = performance.now();
-    const grad = octx.createLinearGradient(0, 0, cols, rows);
-    grad.addColorStop(0, "#3a3a3a");
-    grad.addColorStop(1, "#000000");
-    octx.fillStyle = grad;
-    octx.fillRect(0, 0, cols, rows);
-    this.paintWaveScene(octx, cols, rows, t, "#ffffff");
+    const source = this.currentSourceFrame;
+    if (source) {
+      octx.fillStyle = "#000000";
+      octx.fillRect(0, 0, cols, rows);
+      this.drawCover(octx, source, source.width, source.height, cols, rows);
+    } else {
+      const t = performance.now();
+      const grad = octx.createLinearGradient(0, 0, cols, rows);
+      grad.addColorStop(0, "#3a3a3a");
+      grad.addColorStop(1, "#000000");
+      octx.fillStyle = grad;
+      octx.fillRect(0, 0, cols, rows);
+      this.paintWaveScene(octx, cols, rows, t, "#ffffff");
+    }
 
     const img = octx.getImageData(0, 0, cols, rows).data;
 
@@ -217,8 +265,17 @@ export class MockRenderer {
       });
     }
 
-    ctx.fillStyle = "#0b0b0e";
-    ctx.fillRect(0, 0, w, h);
+    const source = this.currentSourceFrame;
+    if (source) {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, w, h);
+      this.drawCover(ctx, source, source.width, source.height, w, h);
+      ctx.fillStyle = "rgba(11,11,14,0.4)";
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      ctx.fillStyle = "#0b0b0e";
+      ctx.fillRect(0, 0, w, h);
+    }
 
     this.particles = this.particles.filter((p) => p.age < p.lifetime);
     ctx.fillStyle = color;

@@ -10,6 +10,7 @@ export function ViewportCanvas() {
   const activeEffect = useAppStore((s) => s.activeEffect);
   const params = useAppStore((s) => s.paramsByEffect[s.activeEffect]);
   const setStats = useAppStore((s) => s.setStats);
+  const videoFrames = useAppStore((s) => s.video.frames);
 
   // attach once
   useEffect(() => {
@@ -58,6 +59,28 @@ export function ViewportCanvas() {
       wasmBridge.updateParams(activeEffect, params);
     }
   }, [activeEffect, params]);
+
+  // when a video is loaded/cleared, hand its frames to the mock renderer so
+  // the effect samples the video instead of the synthetic startup scene
+  useEffect(() => {
+    rendererRef.current?.setSourceFrames(videoFrames);
+  }, [videoFrames]);
+
+  // once video frames are active, drive the sampled frame from the shared
+  // timeline (play/pause/scrub) instead of the renderer's own free-running clock
+  useEffect(() => {
+    let lastFrame = -1;
+    const unsubscribe = useAppStore.subscribe((state) => {
+      const renderer = rendererRef.current;
+      if (!renderer?.hasSourceFrames) return;
+      const cf = state.timeline.currentFrame;
+      if (cf !== lastFrame) {
+        lastFrame = cf;
+        renderer.setSourceFrameIndex(cf);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   return <canvas ref={canvasRef} id="canvas" className="h-full w-full" />;
 }

@@ -7,6 +7,7 @@ import {
   type ExportJobState,
   type ViewportOverlayStats,
 } from "@/types/effects";
+import { extractVideoFrames } from "@/lib/videoFrameExtractor";
 
 export type ZoomMode = "fit" | "50" | "100" | "200";
 export type MobileTab = "preview" | "parameters" | "code" | "export";
@@ -38,6 +39,13 @@ interface AppState {
   rightPanelOpen: boolean;
   bottomPanelOpen: boolean;
 
+  video: {
+    frames: ImageBitmap[] | null;
+    loading: boolean;
+    progress: number;
+    error: string | null;
+  };
+
   setActiveEffect: (effect: EffectId) => void;
   setParam: (effect: EffectId, key: string, value: EffectParams[string]) => void;
   resetParams: (effect: EffectId) => void;
@@ -62,6 +70,9 @@ interface AppState {
   toggleLeftSidebar: () => void;
   toggleRightPanel: () => void;
   toggleBottomPanel: () => void;
+
+  loadVideo: (file: File) => Promise<void>;
+  clearVideo: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -86,6 +97,8 @@ export const useAppStore = create<AppState>((set) => ({
   leftSidebarOpen: true,
   rightPanelOpen: true,
   bottomPanelOpen: true,
+
+  video: { frames: null, loading: false, progress: 0, error: null },
 
   setActiveEffect: (effect) => set({ activeEffect: effect }),
 
@@ -132,6 +145,34 @@ export const useAppStore = create<AppState>((set) => ({
   toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
   toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
   toggleBottomPanel: () => set((s) => ({ bottomPanelOpen: !s.bottomPanelOpen })),
+
+  loadVideo: async (file) => {
+    set({ video: { frames: null, loading: true, progress: 0, error: null } });
+    try {
+      const result = await extractVideoFrames(file, (done, total) => {
+        set((s) => ({ video: { ...s.video, progress: total > 0 ? done / total : 0 } }));
+      });
+      set({
+        video: { frames: result.frames, loading: false, progress: 1, error: null },
+        timeline: {
+          playing: true,
+          currentFrame: 0,
+          fps: result.fps,
+          durationSeconds: result.frames.length / result.fps,
+        },
+      });
+    } catch (err) {
+      set({
+        video: { frames: null, loading: false, progress: 0, error: err instanceof Error ? err.message : "Error al cargar el video" },
+      });
+    }
+  },
+
+  clearVideo: () =>
+    set({
+      video: { frames: null, loading: false, progress: 0, error: null },
+      timeline: { playing: true, currentFrame: 0, durationSeconds: 10, fps: 60 },
+    }),
 }));
 
 export function useActiveParams() {
