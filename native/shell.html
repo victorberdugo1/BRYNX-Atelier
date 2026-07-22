@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Procedural VFX Lab — Renderer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%;
+            background: #0b0b0e;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        #canvas {
+            display: block;
+            width: 100%; height: 100%;
+            outline: none;
+            image-rendering: pixelated;
+        }
+        #loading {
+            position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff; padding: 24px; border-radius: 8px;
+            text-align: center; font-size: 14px; z-index: 1000; min-width: 260px;
+        }
+        #loading.hidden { display: none; }
+        #loading .accent { color: #44D4FF; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+    <div id="loading">
+        <p><span class="accent">Procedural VFX Lab</span> — loading renderer…</p>
+        <p style="font-size: 12px; margin-top: 8px; color: #aaa;">Initializing FFmpeg (local)…</p>
+    </div>
+
+    <!-- Emscripten module config. `canvas` is overwritten by wasmBridge.ts
+         before this glue script runs, when embedded inside the Vite app -->
+    <script type="text/javascript">
+        var Module = window.Module || {
+            canvas: document.getElementById('canvas'),
+        };
+        Module.print = Module.print || function (text) { console.log(text); };
+        Module.printErr = Module.printErr || function (text) { console.error(text); };
+        var _userOnRuntimeInitialized = Module.onRuntimeInitialized;
+        Module.onRuntimeInitialized = function () {
+            var el = document.getElementById('loading');
+            if (el) el.classList.add('hidden');
+            console.log('[Emscripten] Runtime initialized');
+            if (_userOnRuntimeInitialized) _userOnRuntimeInitialized();
+        };
+    </script>
+
+    <!-- Emscripten-generated glue script -->
+    {{{ SCRIPT }}}
+
+    <!-- VideoExportJS (loads FFmpeg core, manages MediaRecorder capture) -->
+    <script defer src="video_export.js"></script>
+</body>
+</html>

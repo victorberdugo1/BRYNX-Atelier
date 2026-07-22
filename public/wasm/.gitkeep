@@ -1,0 +1,3 @@
+Place the compiled native/ build output here (index.js, index.wasm, video_export.js)
+after running `make copy` inside native/. Until these files exist, wasmBridge.ts
+automatically falls back to the Canvas2D mock renderer in src/lib/mockRenderer.ts.

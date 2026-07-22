@@ -1,0 +1,8 @@
+node_modules
+dist
+native/emsdk
+native/raylib
+native/ffmpeg
+native/*.a
+*.wasm
+*.log

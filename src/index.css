@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 220 13% 9%;
+  --foreground: 210 15% 88%;
+  --panel: 220 14% 12%;
+  --panel-raised: 220 13% 15%;
+  --border: 220 13% 20%;
+  --input: 220 13% 18%;
+  --ring: 195 100% 65%;
+  --muted: 220 10% 22%;
+  --muted-foreground: 220 8% 60%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* thin, VSCode-style scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(220 10% 26%);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 10% 34%);
+  background-clip: content-box;
+}
+
+.checker-bg {
+  background-image:
+    linear-gradient(45deg, #2a2a30 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2a30 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2a30 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2a30 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+  background-color: #202024;
+}
+
+.panel-divider {
+  background: hsl(var(--border));
+}
