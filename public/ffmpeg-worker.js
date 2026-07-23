@@ -36,9 +36,52 @@ function loadCore() {
   });
 }
 
+// ffmpeg-core.js overwrites whatever locateFile() you pass it (it has its
+// own internal one baked in for its normal loading flow) and, lacking a
+// mainScriptUrlOrBlob, falls back to resolving "ffmpeg-core.wasm" relative
+// to *this worker script's own* directory — i.e. "/ffmpeg-core.wasm" at the
+// site root, not "/ffmpeg/ffmpeg-core.wasm" where the file actually lives.
+// That 404s, the dev/preview server's SPA fallback serves index.html for
+// it, and WebAssembly.instantiate then chokes on HTML instead of wasm
+// ("expected magic word", since it got "<!do..." instead of the binary).
+// Fetching the .wasm ourselves and handing it in as Module.wasmBinary
+// sidesteps locateFile entirely — the core uses it directly and never
+// tries to fetch anything on its own.
+function fetchWasmBinary() {
+  const candidates = [
+    '/ffmpeg/ffmpeg-core.wasm',
+    'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.wasm',
+  ];
+  return (async () => {
+    let lastError = null;
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          lastError = new Error(`HTTP ${res.status} fetching ${url}`);
+          continue;
+        }
+        const buf = await res.arrayBuffer();
+        const head = new Uint8Array(buf.slice(0, 4));
+        const isWasm = head[0] === 0x00 && head[1] === 0x61 && head[2] === 0x73 && head[3] === 0x6d;
+        if (!isWasm) {
+          lastError = new Error(`${url} did not return a valid .wasm file (got something else, e.g. an HTML fallback page)`);
+          continue;
+        }
+        return buf;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('ffmpeg-core.wasm could not be loaded from any candidate URL');
+  })();
+}
+
 const initPromise = (async () => {
   await loadCore();
+  const wasmBinary = await fetchWasmBinary();
   g_module = await createFFmpegCore({
+    wasmBinary,
     locateFile: (path) => (path.endsWith('.wasm') ? '/ffmpeg/ffmpeg-core.wasm' : path),
   });
 })();
