@@ -1,11 +1,12 @@
-// Fixed import window: always sample at 30fps, and only import the first
-// MAX_DURATION_SECONDS of the clip. Longer videos get truncated rather than
-// sampled at a lower fps — the adaptive-fps approach made very long/heavy
-// videos seek through hundreds of extra frames, which is what was causing
-// "Error al buscar frame del video" and downstream framebuffer trouble.
+// Always sample at a fixed 30fps (the adaptive-fps approach made very
+// long/heavy videos seek through hundreds of extra frames, which is what was
+// causing "Error al buscar frame del video" and downstream framebuffer
+// trouble). There is no duration cap — the whole clip is imported. If seeking
+// or decoding eventually fails partway through a very long/heavy video (e.g.
+// the browser runs out of memory for the frame bitmaps), extraction stops
+// there and returns whatever frames were already captured instead of
+// discarding the entire import.
 const DEFAULT_FPS = 30;
-const MAX_DURATION_SECONDS = 20;
-const MAX_FRAMES = DEFAULT_FPS * MAX_DURATION_SECONDS;
 
 export interface VideoFrameExtractionResult {
   frames: ImageBitmap[];
@@ -66,11 +67,14 @@ function seekToFrame(video: HTMLVideoElement, t: number): Promise<void> {
 }
 
 /**
- * Extrae frames de un archivo de video a 30fps, hasta un máximo de 20
- * segundos (los primeros 20s si el video es más largo), como ImageBitmap,
- * usando un <video> mudo y un canvas offscreen. Si el seek de un frame
- * puntual falla, se reintenta una vez y si vuelve a fallar se reutiliza el
- * último frame válido en su lugar, en vez de abortar toda la importación.
+ * Extrae frames de un archivo de video completo a 30fps (sin límite de
+ * duración) como ImageBitmap, usando un <video> mudo y un canvas offscreen.
+ * Si el seek de un frame puntual falla, se reintenta una vez y si vuelve a
+ * fallar se reutiliza el último frame válido en su lugar, en vez de abortar
+ * toda la importación. Si no hay ningún frame previo que reutilizar, o si
+ * llega a fallar la creación del bitmap de un frame (p. ej. sin memoria en
+ * videos muy largos/pesados), la extracción se detiene ahí mismo y devuelve
+ * los frames capturados hasta ese punto en vez de descartar todo el import.
  * El audio nunca se decodifica ni se reproduce — solo se dibujan frames del
  * elemento de video sobre un canvas (drawImage), así que queda descartado
  * por completo.
@@ -133,7 +137,7 @@ export async function extractVideoFrames(
     await seekToFrame(video, 0);
 
     const fps = DEFAULT_FPS;
-    const totalFrames = Math.max(1, Math.min(MAX_FRAMES, Math.round(duration * fps)));
+    const totalFrames = Math.max(1, Math.round(duration * fps));
 
     const canvas = document.createElement("canvas");
     canvas.width = width;
@@ -158,13 +162,29 @@ export async function extractVideoFrames(
             onProgress?.(i + 1, totalFrames);
             continue;
           }
-          throw err; // no previous frame to fall back to — nothing we can do
+          // No previous frame to fall back to and seeking is failing —
+          // stop here rather than throwing away an import that hasn't
+          // produced anything usable yet.
+          console.error(`[videoFrameExtractor] stopping import at frame ${i}: seek failed`, err);
+          break;
         }
       }
-      ctx.drawImage(video, 0, 0, width, height);
-      const bitmap = await createImageBitmap(canvas);
-      frames.push(bitmap);
-      onProgress?.(i + 1, totalFrames);
+
+      try {
+        ctx.drawImage(video, 0, 0, width, height);
+        const bitmap = await createImageBitmap(canvas);
+        frames.push(bitmap);
+        onProgress?.(i + 1, totalFrames);
+      } catch (err) {
+        // Likely ran out of memory partway through a very long/heavy video.
+        // Keep everything captured so far instead of discarding the import.
+        console.error(`[videoFrameExtractor] stopping import at frame ${i}: could not create frame bitmap`, err);
+        break;
+      }
+    }
+
+    if (frames.length === 0) {
+      throw new Error("No se pudo extraer ningún frame del video");
     }
 
     return { frames, fps, width, height };

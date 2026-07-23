@@ -9,7 +9,14 @@ import {
 } from "@/types/effects";
 import { extractVideoFrames } from "@/lib/videoFrameExtractor";
 
-export type ZoomMode = "fit" | "50" | "100" | "200";
+export type ZoomMode = "fit" | "50" | "100" | "200" | "custom";
+
+const ZOOM_SCALE_MIN = 0.1;
+const ZOOM_SCALE_MAX = 8;
+
+function clampZoomScale(v: number) {
+  return Math.min(ZOOM_SCALE_MAX, Math.max(ZOOM_SCALE_MIN, v));
+}
 export type MobileTab = "preview" | "parameters" | "code" | "export";
 export type CodeTab = "code" | "shader" | "json" | "readme";
 
@@ -25,6 +32,10 @@ interface AppState {
   paramsByEffect: Record<EffectId, EffectParams>;
 
   zoom: ZoomMode;
+  /** Actual CSS scale factor applied to the viewport (1 = 100%). Presets
+   * (fit/50/100/200) set this to a fixed value; the mouse wheel adjusts it
+   * continuously and flips `zoom` to "custom". */
+  zoomScale: number;
   pan: { x: number; y: number };
   stats: ViewportOverlayStats;
 
@@ -51,7 +62,10 @@ interface AppState {
   resetParams: (effect: EffectId) => void;
 
   setZoom: (z: ZoomMode) => void;
+  setZoomScale: (scale: number) => void;
   setPan: (p: { x: number; y: number }) => void;
+  panBy: (dx: number, dy: number) => void;
+  resetView: () => void;
   setStats: (s: ViewportOverlayStats) => void;
 
   togglePlay: () => void;
@@ -84,10 +98,11 @@ export const useAppStore = create<AppState>((set) => ({
   },
 
   zoom: "fit",
+  zoomScale: 1,
   pan: { x: 0, y: 0 },
   stats: { fps: 0, resolutionW: 0, resolutionH: 0, frame: 0, effect: "ascii", gpuFrameTimeMs: 0 },
 
-  timeline: { playing: true, currentFrame: 0, durationSeconds: 10, fps: 60 },
+  timeline: { playing: false, currentFrame: 0, durationSeconds: 10, fps: 60 },
 
   codeTab: "code",
   mobileTab: "preview",
@@ -115,8 +130,14 @@ export const useAppStore = create<AppState>((set) => ({
       paramsByEffect: { ...s.paramsByEffect, [effect]: defaultParamsFor(effect) },
     })),
 
-  setZoom: (z) => set({ zoom: z }),
+  setZoom: (z) => {
+    const presetScale: Partial<Record<ZoomMode, number>> = { fit: 1, "50": 0.5, "100": 1, "200": 2 };
+    set({ zoom: z, zoomScale: presetScale[z] ?? 1, pan: { x: 0, y: 0 } });
+  },
+  setZoomScale: (scale) => set({ zoom: "custom", zoomScale: clampZoomScale(scale) }),
   setPan: (p) => set({ pan: p }),
+  panBy: (dx, dy) => set((s) => ({ pan: { x: s.pan.x + dx, y: s.pan.y + dy } })),
+  resetView: () => set({ zoom: "fit", zoomScale: 1, pan: { x: 0, y: 0 } }),
   setStats: (stats) => set({ stats }),
 
   togglePlay: () => set((s) => ({ timeline: { ...s.timeline, playing: !s.timeline.playing } })),
@@ -155,7 +176,7 @@ export const useAppStore = create<AppState>((set) => ({
       set({
         video: { frames: result.frames, loading: false, progress: 1, error: null },
         timeline: {
-          playing: true,
+          playing: false,
           currentFrame: 0,
           fps: result.fps,
           durationSeconds: result.frames.length / result.fps,
@@ -171,7 +192,7 @@ export const useAppStore = create<AppState>((set) => ({
   clearVideo: () =>
     set({
       video: { frames: null, loading: false, progress: 0, error: null },
-      timeline: { playing: true, currentFrame: 0, durationSeconds: 10, fps: 60 },
+      timeline: { playing: false, currentFrame: 0, durationSeconds: 10, fps: 60 },
     }),
 }));
 

@@ -47,6 +47,8 @@ ParticleParams params = {
     .sizeFalloff = ${fmtNum(params.sizeFalloff)}f,
     .color       = (Color){ ${hexToRgbComment(String(params.color))}, 255 },
     .spreadDeg   = ${fmtNum(params.spread)}f,
+    .spawnX      = ${fmtNum(params.spawnX)}f,
+    .spawnY      = ${fmtNum(params.spawnY)}f,
 };
 
 ParticleEffect_SetParams(&g_particleEffect, &params);

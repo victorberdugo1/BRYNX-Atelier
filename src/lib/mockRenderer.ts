@@ -22,7 +22,15 @@ export class MockRenderer {
   private params: EffectParams = {};
   private particles: Particle[] = [];
   private frame = 0;
-  private raf = 0;
+  // requestAnimationFrame-based scheduling — the browser's smoothest option
+  // while the tab is visible — but it is fully suspended by every major
+  // browser while the document is hidden, which froze both the live preview
+  // and any in-progress export the moment the tab lost focus. setTimeout
+  // keeps firing (throttled, but never fully stopped) in background tabs,
+  // so the render loop uses it instead; the ~16ms interval targets the same
+  // ~60fps rAF gave us while the tab is in the foreground.
+  private timerHandle: number | null = null;
+  private static readonly TICK_INTERVAL_MS = 16;
   private lastTime = performance.now();
   private fps = 0;
   private onStats?: (s: ViewportOverlayStats) => void;
@@ -86,13 +94,16 @@ export class MockRenderer {
   start() {
     const loop = () => {
       this.tick();
-      this.raf = requestAnimationFrame(loop);
+      this.timerHandle = window.setTimeout(loop, MockRenderer.TICK_INTERVAL_MS);
     };
-    this.raf = requestAnimationFrame(loop);
+    this.timerHandle = window.setTimeout(loop, MockRenderer.TICK_INTERVAL_MS);
   }
 
   stop() {
-    cancelAnimationFrame(this.raf);
+    if (this.timerHandle !== null) {
+      window.clearTimeout(this.timerHandle);
+      this.timerHandle = null;
+    }
   }
 
   private tick() {
@@ -250,14 +261,16 @@ export class MockRenderer {
     const sizeFalloff = Number(this.params.sizeFalloff ?? 0.6);
     const color = String(this.params.color ?? "#44D4FF");
     const spread = (Number(this.params.spread ?? 45) * Math.PI) / 180;
+    const spawnX = Number(this.params.spawnX ?? 0.5);
+    const spawnY = Number(this.params.spawnY ?? 0.8);
 
     const toSpawn = Math.min(count - this.particles.length, Math.round(spawnRate * dt));
     for (let i = 0; i < toSpawn; i++) {
       const angle = -Math.PI / 2 + (Math.random() - 0.5) * spread;
       const speed = 60 + Math.random() * 120;
       this.particles.push({
-        x: w / 2,
-        y: h * 0.8,
+        x: w * spawnX,
+        y: h * spawnY,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         age: 0,
@@ -270,7 +283,7 @@ export class MockRenderer {
       ctx.fillStyle = "#000000";
       ctx.fillRect(0, 0, w, h);
       this.drawCover(ctx, source, source.width, source.height, w, h);
-      ctx.fillStyle = "rgba(11,11,14,0.4)";
+      ctx.fillStyle = "rgba(11,11,14,0.25)";
       ctx.fillRect(0, 0, w, h);
     } else {
       ctx.fillStyle = "#0b0b0e";

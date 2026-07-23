@@ -24,13 +24,32 @@ interface ExportPanelProps {
   trigger: React.ReactNode;
 }
 
-// rAF as a promise — one tick of the browser's paint loop.
+// Gives the renderer a tick to actually push/paint the new frame before we
+// grab the canvas. This used to wait on requestAnimationFrame, but browsers
+// fully suspend rAF callbacks while the tab is hidden/backgrounded — which
+// froze the export loop the moment the user switched tabs. setTimeout still
+// fires (throttled, but never fully stopped) in background tabs, so use it
+// instead — this keeps the export progressing while the user works on
+// something else.
 function nextFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  return new Promise((resolve) => window.setTimeout(resolve, 16));
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+// Best-effort: keeps the display from sleeping mid-export. Has no effect on
+// background-tab timer throttling (that's handled by switching off rAF
+// above and in the wasm main loop), it only stops the screen itself from
+// locking. Silently no-ops if unsupported or if the request is rejected
+// (e.g. the tab was already hidden when requested).
+async function requestWakeLock(): Promise<WakeLockSentinel | null> {
+  try {
+    return (await navigator.wakeLock?.request("screen")) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function ExportPanel({ trigger }: ExportPanelProps) {
@@ -89,6 +108,10 @@ export function ExportPanel({ trigger }: ExportPanelProps) {
     const wasPlaying = timeline.playing;
     if (hasVideo) setPlaying(false);
 
+    // Best-effort: keep the screen from locking mid-export (see
+    // requestWakeLock's comment above for what this does and doesn't cover).
+    const wakeLock = await requestWakeLock();
+
     const stillCurrent = () => runIdRef.current === runId && useAppStore.getState().exportJob.running;
 
     try {
@@ -139,9 +162,24 @@ export function ExportPanel({ trigger }: ExportPanelProps) {
       finishExport();
     } catch (err) {
       console.error("[ExportPanel] export failed:", err);
-      if (runIdRef.current === runId) cancelExport();
+      if (runIdRef.current === runId) {
+        // Make sure any partially-written encoder buffers (ffmpeg FS frames,
+        // in-flight MediaRecorder chunks, etc.) are cleared even when the
+        // failure happened outside our own try block above, so the next
+        // export starts from a clean slate instead of inheriting leftovers.
+        wasmBridge.cancelRecording();
+        cancelExport();
+      }
     } finally {
-      if (hasVideo && runIdRef.current === runId) setPlaying(wasPlaying);
+      if (runIdRef.current === runId) {
+        if (hasVideo) setPlaying(wasPlaying);
+        // Always rewind the timeline slider to the start once an export
+        // ends — whether it finished, failed, or was cancelled — so a new
+        // export begins at frame 0 instead of resuming from wherever this
+        // one stopped.
+        setCurrentFrame(0);
+      }
+      wakeLock?.release().catch(() => {});
     }
   }
 
@@ -149,6 +187,7 @@ export function ExportPanel({ trigger }: ExportPanelProps) {
     runIdRef.current += 1;
     wasmBridge.cancelRecording();
     cancelExport();
+    setCurrentFrame(0);
   }
 
   return (

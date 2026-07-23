@@ -17,7 +17,7 @@ declare global {
   interface Window {
     Module?: Partial<EmscriptenModule>;
     VideoExportJS?: {
-      startEncoder: (w: number, h: number, fps: number, format?: ExportFormat) => boolean;
+      startEncoder: (w: number, h: number, fps: number, format?: ExportFormat) => boolean | Promise<boolean>;
       captureFrame: () => Promise<void> | void;
       finishEncoder: (filename: string) => Promise<void>;
       cancelRecording: () => void;
@@ -36,8 +36,6 @@ class WasmBridge {
   private mode: "wasm" | "mock" | "unloaded" = "unloaded";
   private statsListeners = new Set<StatsListener>();
   private pollHandle: number | null = null;
-  private exportCaptureHandle: number | null = null;
-  private exportActive = false;
   // The Emscripten glue script bootstraps global FS/heap state once per page;
   // loading it a second time (e.g. React StrictMode's mount/unmount/remount,
   // or a second ViewportCanvas instance) throws ErrnoError(20) inside
@@ -239,36 +237,13 @@ class WasmBridge {
       console.warn("[wasmBridge] js_start_export bridge unavailable, continuing with JS-only recording", error);
     }
 
-    const started = window.VideoExportJS.startEncoder(width, height, fps, format);
+    const started = await window.VideoExportJS.startEncoder(width, height, fps, format);
     if (!started) {
       console.error("[wasmBridge] startRecording: VideoExportJS could not start the recorder");
       return false;
     }
 
-    this.exportActive = true;
-    this.startExportCaptureLoop();
     return true;
-  }
-
-  private startExportCaptureLoop() {
-    if (this.exportCaptureHandle !== null || !this.exportActive) return;
-    const tick = () => {
-      if (!this.exportActive) {
-        this.exportCaptureHandle = null;
-        return;
-      }
-      void window.VideoExportJS?.captureFrame?.();
-      this.exportCaptureHandle = requestAnimationFrame(tick);
-    };
-    this.exportCaptureHandle = requestAnimationFrame(tick);
-  }
-
-  private stopExportCaptureLoop() {
-    this.exportActive = false;
-    if (this.exportCaptureHandle !== null) {
-      cancelAnimationFrame(this.exportCaptureHandle);
-      this.exportCaptureHandle = null;
-    }
   }
 
   async captureFrame() {
@@ -285,7 +260,6 @@ class WasmBridge {
       console.error("[wasmBridge] stopRecording: VideoExportJS is not available");
       return;
     }
-    this.stopExportCaptureLoop();
     try {
       window.Module?.ccall?.("js_stop_export", "void", [], []);
     } catch (error) {
@@ -295,7 +269,6 @@ class WasmBridge {
   }
 
   cancelRecording() {
-    this.stopExportCaptureLoop();
     try {
       window.Module?.ccall?.("js_stop_export", "void", [], []);
     } catch (error) {
@@ -331,10 +304,7 @@ class WasmBridge {
 
   dispose() {
     if (this.pollHandle !== null) cancelAnimationFrame(this.pollHandle);
-    if (this.exportCaptureHandle !== null) cancelAnimationFrame(this.exportCaptureHandle);
     this.pollHandle = null;
-    this.exportCaptureHandle = null;
-    this.exportActive = false;
     this.statsListeners.clear();
     this.videoFrames = null;
   }

@@ -45,8 +45,8 @@ static int g_videoTexH = 0;
 // ============================================================================
 // PROCEDURAL BASE SCENE
 //
-// ASCII and CRT post-process whatever is rendered here; Particles ignores it
-// and draws directly to the backbuffer since it IS the whole image.
+// ASCII, CRT and Particles all post-process whatever is rendered here — the
+// video (or the procedural wave placeholder when no video is loaded).
 // ============================================================================
 
 // Full-bleed placeholder scene: covers the entire g_screenW x g_screenH area
@@ -141,8 +141,20 @@ const char *js_get_stats_json(void) {
 EMSCRIPTEN_KEEPALIVE
 #endif
 void js_start_export(int width, int height, int fps) {
-    (void)fps;
     VideoExportStart(width, height);
+#ifdef __EMSCRIPTEN__
+    // emscripten_set_main_loop(..., 0, 1) drives this loop off
+    // requestAnimationFrame by default, and browsers fully suspend rAF
+    // callbacks while the tab is hidden/backgrounded — which froze the
+    // whole render loop (and therefore the export) the moment the user
+    // switched away from the tab. setTimeout-based timing keeps firing
+    // (throttled, but never fully stopped) in background tabs, so switch
+    // to it for the duration of the export.
+    int safeFps = fps > 0 ? fps : 60;
+    emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, 1000 / safeFps);
+#else
+    (void)fps;
+#endif
 }
 
 #ifdef __EMSCRIPTEN__
@@ -150,6 +162,11 @@ EMSCRIPTEN_KEEPALIVE
 #endif
 void js_stop_export(void) {
     VideoExportStop();
+#ifdef __EMSCRIPTEN__
+    // Back to requestAnimationFrame-synced timing for normal foreground
+    // preview playback — smoother and cheaper than setTimeout.
+    emscripten_set_main_loop_timing(EM_TIMING_RAF, 1);
+#endif
 }
 
 // Called when the canvas should switch to a different internal render
@@ -257,6 +274,15 @@ static void UpdateDrawFrame(void) {
             break;
 
         case EFFECT_PARTICLES:
+            // Particles used to skip the scene pass entirely and draw straight
+            // to the backbuffer, so the video/base scene never made it into
+            // g_sceneTarget for this branch and ParticlesEffect_Draw had
+            // nothing to show behind the particles. Render it like the other
+            // effects so the video is visible under the particle layer.
+            BeginTextureMode(g_sceneTarget);
+            DrawBaseScene();
+            EndTextureMode();
+
             BeginDrawing();
             ParticlesEffect_Update(dt);
             ParticlesEffect_Draw(g_sceneTarget, g_screenW, g_screenH);

@@ -23,6 +23,8 @@ typedef struct {
     float sizeFalloff;
     Color color;
     float spreadDeg;
+    float spawnX; // normalized 0..1, fraction of screenW
+    float spawnY; // normalized 0..1, fraction of screenH
 } ParticleParams;
 
 static ParticleParams g_params = {
@@ -34,6 +36,8 @@ static ParticleParams g_params = {
     .sizeFalloff = 0.6f,
     .color = (Color){ 68, 212, 255, 255 },
     .spreadDeg = 45.0f,
+    .spawnX = 0.5f,
+    .spawnY = 0.8f,
 };
 
 static Particle g_pool[PARTICLES_MAX];
@@ -58,6 +62,8 @@ void ParticlesEffect_SetParams(const JsonValue *paramsObj) {
     g_params.sizeFalloff = (float)JsonAsNumber(JsonObjectGet(paramsObj, "sizeFalloff"), g_params.sizeFalloff);
     g_params.spreadDeg   = (float)JsonAsNumber(JsonObjectGet(paramsObj, "spread"), g_params.spreadDeg);
     g_params.color       = HexToColor(JsonAsString(JsonObjectGet(paramsObj, "color"), NULL), g_params.color);
+    g_params.spawnX      = (float)JsonAsNumber(JsonObjectGet(paramsObj, "spawnX"), g_params.spawnX);
+    g_params.spawnY      = (float)JsonAsNumber(JsonObjectGet(paramsObj, "spawnY"), g_params.spawnY);
 }
 
 static void SpawnParticle(int screenW, int screenH) {
@@ -68,7 +74,7 @@ static void SpawnParticle(int screenW, int screenH) {
     float speed = 60.0f + ((float)rand() / RAND_MAX) * 120.0f;
 
     Particle *p = &g_pool[g_aliveCount++];
-    p->position = (Vector2){ screenW / 2.0f, screenH * 0.8f };
+    p->position = (Vector2){ g_params.spawnX * screenW, g_params.spawnY * screenH };
     p->velocity = (Vector2){ cosf(angle) * speed, sinf(angle) * speed };
     p->age = 0.0f;
     p->lifetime = g_params.lifetime * (0.6f + ((float)rand() / RAND_MAX) * 0.4f);
@@ -93,8 +99,6 @@ void ParticlesEffect_Update(float dt) {
 }
 
 void ParticlesEffect_Draw(RenderTexture2D scene, int screenW, int screenH) {
-    (void)scene;
-
     g_spawnAccumulator += g_params.spawnRate * GetFrameTime();
     while (g_spawnAccumulator >= 1.0f && g_aliveCount < g_params.count) {
         SpawnParticle(screenW, screenH);
@@ -102,6 +106,19 @@ void ParticlesEffect_Draw(RenderTexture2D scene, int screenW, int screenH) {
     }
 
     ClearBackground((Color){ 0, 0, 0, 0 });
+
+    // Draw whatever's in the scene target (the video frame, or the procedural
+    // placeholder from DrawBaseScene) behind the particles instead of
+    // discarding it — dimmed slightly so particles still read clearly on top.
+    // RenderTexture2D content is stored bottom-up in GL, hence the negative
+    // height, matching the flip used in ascii_effect.c/crt_effect.c.
+    DrawTextureRec(
+        scene.texture,
+        (Rectangle){ 0, 0, (float)scene.texture.width, -(float)scene.texture.height },
+        (Vector2){ 0, 0 },
+        WHITE
+    );
+    DrawRectangle(0, 0, screenW, screenH, (Color){ 11, 11, 14, 100 });
 
     for (int i = 0; i < g_aliveCount; i++) {
         Particle *p = &g_pool[i];

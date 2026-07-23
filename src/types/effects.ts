@@ -83,6 +83,8 @@ export const PARTICLES_EFFECT: EffectDefinition = {
     { key: "sizeFalloff", label: "Size Falloff", type: "float", default: 0.6, min: 0, max: 1, step: 0.01, group: "Appearance" },
     { key: "color", label: "Color", type: "color", default: "#44D4FF", group: "Appearance" },
     { key: "spread", label: "Spread (deg)", type: "float", default: 45, min: 0, max: 360, step: 1, group: "Emission" },
+    { key: "spawnX", label: "Spawn X", type: "float", default: 0.5, min: 0, max: 1, step: 0.01, group: "Emission" },
+    { key: "spawnY", label: "Spawn Y", type: "float", default: 0.8, min: 0, max: 1, step: 0.01, group: "Emission" },
   ],
 };
 
