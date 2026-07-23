@@ -3,9 +3,21 @@ import { useAppStore } from "@/store/useAppStore";
 import { wasmBridge } from "@/lib/wasmBridge";
 import { MockRenderer } from "@/lib/mockRenderer";
 
+function containerPixelSize(canvas: HTMLCanvasElement) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  return { width: Math.round(rect.width * dpr), height: Math.round(rect.height * dpr) };
+}
+
 export function ViewportCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<MockRenderer | null>(null);
+  // Native render resolution. Normally tracks the container's CSS size (see
+  // the ResizeObserver below); while a video is loaded it's pinned to the
+  // video's own pixel dimensions instead, so the full frame renders — and
+  // every effect, which samples g_sceneTarget at whatever size it was
+  // drawn at — covers the whole thing instead of a cropped/stretched slice.
+  const videoDimsRef = useRef<{ width: number; height: number } | null>(null);
 
   const activeEffect = useAppStore((s) => s.activeEffect);
   const params = useAppStore((s) => s.paramsByEffect[s.activeEffect]);
@@ -18,10 +30,11 @@ export function ViewportCanvas() {
     if (!canvas) return;
 
     const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      canvas.width = Math.round(rect.width * dpr);
-      canvas.height = Math.round(rect.height * dpr);
+      if (videoDimsRef.current) return; // video drives resolution while active
+      const { width, height } = containerPixelSize(canvas);
+      canvas.width = width;
+      canvas.height = height;
+      wasmBridge.setCanvasSize(width, height);
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -38,6 +51,10 @@ export function ViewportCanvas() {
         rendererRef.current = renderer;
       } else {
         wasmBridge.onStats(setStats);
+        // The module just booted at its fixed startup resolution — sync it
+        // to whatever the canvas is already sized to (container, or video
+        // if one finished loading before attach resolved).
+        wasmBridge.setCanvasSize(canvas.width, canvas.height);
       }
     });
 
@@ -60,10 +77,27 @@ export function ViewportCanvas() {
     }
   }, [activeEffect, params]);
 
-  // when a video is loaded/cleared, hand its frames to the mock renderer so
-  // the effect samples the video instead of the synthetic startup scene
+  // when a video is loaded/cleared, size the canvas to the video's native
+  // resolution (or back to the container's, once cleared) and hand the
+  // frames to whichever backend is active so the effect samples the video
+  // instead of the synthetic startup scene (mock reads ImageBitmaps
+  // directly; wasm decodes them to RGBA8)
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    videoDimsRef.current =
+      videoFrames && videoFrames.length > 0
+        ? { width: videoFrames[0].width, height: videoFrames[0].height }
+        : null;
+
+    const dims = videoDimsRef.current ?? containerPixelSize(canvas);
+    canvas.width = dims.width;
+    canvas.height = dims.height;
+    wasmBridge.setCanvasSize(dims.width, dims.height);
+
     rendererRef.current?.setSourceFrames(videoFrames);
+    wasmBridge.setVideoFrames(videoFrames);
   }, [videoFrames]);
 
   // once video frames are active, drive the sampled frame from the shared
@@ -72,11 +106,15 @@ export function ViewportCanvas() {
     let lastFrame = -1;
     const unsubscribe = useAppStore.subscribe((state) => {
       const renderer = rendererRef.current;
-      if (!renderer?.hasSourceFrames) return;
       const cf = state.timeline.currentFrame;
-      if (cf !== lastFrame) {
+      if (cf === lastFrame) return;
+
+      if (renderer?.hasSourceFrames) {
         lastFrame = cf;
         renderer.setSourceFrameIndex(cf);
+      } else if (wasmBridge.hasVideoFrames) {
+        lastFrame = cf;
+        wasmBridge.setVideoFrameIndex(cf);
       }
     });
     return unsubscribe;

@@ -24,15 +24,25 @@ static AsciiParams g_params = {
     .contrast = 1.2f,
     .gamma = 1.1f,
     .foreground = (Color){ 68, 212, 255, 255 },
-    .background = (Color){ 11, 11, 14, 255 },
+    .background = (Color){ 11, 11, 14, 0 },
     .invert = false,
 };
 
 static Color HexToColor(const char *hex, Color fallback) {
-    if (!hex || hex[0] != '#' || strlen(hex) < 7) return fallback;
-    unsigned int r, g, b;
-    if (sscanf(hex + 1, "%02x%02x%02x", &r, &g, &b) != 3) return fallback;
-    return (Color){ (unsigned char)r, (unsigned char)g, (unsigned char)b, 255 };
+    if (!hex || hex[0] != '#') return fallback;
+    size_t len = strlen(hex);
+    unsigned int r, g, b, a;
+    if (len >= 9) {
+        // #RRGGBBAA
+        if (sscanf(hex + 1, "%02x%02x%02x%02x", &r, &g, &b, &a) != 4) return fallback;
+        return (Color){ (unsigned char)r, (unsigned char)g, (unsigned char)b, (unsigned char)a };
+    }
+    if (len >= 7) {
+        // #RRGGBB — fully opaque
+        if (sscanf(hex + 1, "%02x%02x%02x", &r, &g, &b) != 3) return fallback;
+        return (Color){ (unsigned char)r, (unsigned char)g, (unsigned char)b, 255 };
+    }
+    return fallback;
 }
 
 void AsciiEffect_SetParams(const JsonValue *paramsObj) {
@@ -91,7 +101,12 @@ void AsciiEffect_Draw(RenderTexture2D scene, int screenW, int screenH) {
         g_frameCounter = 0; // force a readback this frame
     }
 
-    ClearBackground((Color){ 0, 0, 0, 0 });
+    // Clears to the configured background color/alpha. At alpha 0 (the
+    // default) this is identical to the old hardcoded fully-transparent
+    // clear — raylib's ClearBackground overwrites the framebuffer's alpha
+    // channel too, it doesn't blend, so alpha 0 here means genuinely no
+    // background either way.
+    ClearBackground(g_params.background);
 
     if (g_frameCounter % ASCII_READBACK_INTERVAL == 0) {
         BeginTextureMode(g_gridTarget);
@@ -109,8 +124,18 @@ void AsciiEffect_Draw(RenderTexture2D scene, int screenW, int screenH) {
         if (rampLen == 0) rampLen = 1;
 
         for (int y = 0; y < rows; y++) {
+            // g_gridTarget is itself a RenderTexture, so reading it back
+            // with LoadImageFromTexture inherits the same bottom-up GL
+            // framebuffer layout that the earlier DrawTexturePro flip (the
+            // negative-height src rect above) exists to compensate for —
+            // that flip corrects the scene->grid copy, but this second
+            // grid->CPU readback needs its own correction, or the luminance
+            // sampled here ends up vertically mirrored relative to what
+            // was actually drawn (invisible on the symmetric-ish procedural
+            // wave scene, obvious on real video/image content).
+            int srcY = rows - 1 - y;
             for (int x = 0; x < cols; x++) {
-                Color px = GetImageColor(img, x, y);
+                Color px = GetImageColor(img, x, srcY);
                 float lum = (px.r + px.g + px.b) / (3.0f * 255.0f);
                 lum = powf(lum, 1.0f / fmaxf(0.01f, g_params.gamma));
                 lum = (lum - 0.5f) * g_params.contrast + 0.5f + (g_params.brightness - 1.0f);

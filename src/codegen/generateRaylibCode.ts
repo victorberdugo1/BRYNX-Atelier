@@ -12,6 +12,12 @@ function hexToRgbComment(hex: string) {
   return `${r}, ${g}, ${b}`;
 }
 
+function hexToRgbaComment(hex: string) {
+  const h = hex.replace("#", "");
+  const a = h.length >= 8 ? parseInt(h.slice(6, 8), 16) : 255;
+  return `${hexToRgbComment(hex)}, ${a}`;
+}
+
 export function generateRaylibCode(effect: EffectId, params: EffectParams): string {
   switch (effect) {
     case "ascii":
@@ -23,7 +29,7 @@ AsciiParams params = {
     .contrast    = ${fmtNum(params.contrast)}f,
     .gamma       = ${fmtNum(params.gamma)}f,
     .foreground  = (Color){ ${hexToRgbComment(String(params.foreground))}, 255 },
-    .background  = (Color){ ${hexToRgbComment(String(params.background))}, 255 },
+    .background  = (Color){ ${hexToRgbaComment(String(params.background))} },
     .invert      = ${params.invert ? "true" : "false"},
 };
 
@@ -52,6 +58,7 @@ ParticleEffect_Draw(&g_particleEffect);`;
 CrtParams params = {
     .scanlineIntensity   = ${fmtNum(params.scanlineIntensity)}f,
     .scanlineCount       = ${fmtNum(params.scanlineCount)},
+    .scanlineSpeed       = ${fmtNum(params.scanlineSpeed)}f,
     .curvature           = ${fmtNum(params.curvature)}f,
     .vignette            = ${fmtNum(params.vignette)}f,
     .noise               = ${fmtNum(params.noise)}f,
@@ -76,6 +83,7 @@ uniform sampler2D texture0;
 uniform float uTime;
 uniform float uScanlineIntensity;
 uniform float uScanlineCount;
+uniform float uScanlineSpeed;
 uniform float uCurvature;
 uniform float uVignette;
 uniform float uNoise;
@@ -105,7 +113,8 @@ void main() {
     float b = texture2D(texture0, uv - vec2(ab, 0.0)).b;
     vec3 color = vec3(r, g, b);
 
-    float scan = sin(uv.y * uScanlineCount * 3.14159) * 0.5 + 0.5;
+    float scanY = uv.y - uTime * uScanlineSpeed * 0.2;
+    float scan = sin(scanY * uScanlineCount * 3.14159) * 0.5 + 0.5;
     color *= mix(1.0, scan, uScanlineIntensity);
 
     float n = (rand(uv * uTime) - 0.5) * uNoise;

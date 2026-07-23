@@ -8,6 +8,7 @@ uniform sampler2D texture0;
 uniform float uTime;
 uniform float uScanlineIntensity;
 uniform float uScanlineCount;
+uniform float uScanlineSpeed;
 uniform float uCurvature;
 uniform float uVignette;
 uniform float uNoise;
@@ -40,7 +41,8 @@ void main() {
     vec3 color = vec3(r, g, b);
     float srcAlpha = centerSample.a;
 
-    float scan = sin(uv.y * uScanlineCount * 3.14159) * 0.5 + 0.5;
+    float scanY = uv.y - uTime * uScanlineSpeed * 0.2;
+    float scan = sin(scanY * uScanlineCount * 3.14159) * 0.5 + 0.5;
     color *= mix(1.0, scan, uScanlineIntensity);
 
     float n = (rand(uv * uTime) - 0.5) * uNoise;

@@ -12,6 +12,10 @@ export interface ParamSchema {
   step?: number;
   options?: string[];
   group?: string;
+  /** Only meaningful for type: "color" — when true, the value is an 8-digit
+   * #RRGGBBAA hex string (with an alpha slider in the UI) instead of the
+   * plain 6-digit #RRGGBB. */
+  alpha?: boolean;
 }
 
 export interface EffectDefinition {
@@ -61,7 +65,7 @@ export const ASCII_EFFECT: EffectDefinition = {
     { key: "contrast", label: "Contrast", type: "float", default: 1.2, min: 0, max: 3, step: 0.01, group: "Image" },
     { key: "gamma", label: "Gamma", type: "float", default: 1.1, min: 0.2, max: 3, step: 0.01, group: "Image" },
     { key: "foreground", label: "Foreground Color", type: "color", default: "#44D4FF", group: "Color" },
-    { key: "background", label: "Background Color", type: "color", default: "#0B0B0E", group: "Color" },
+    { key: "background", label: "Background Color", type: "color", default: "#0B0B0E00", alpha: true, group: "Color" },
     { key: "invert", label: "Invert", type: "bool", default: false, group: "Color" },
   ],
 };
@@ -89,6 +93,7 @@ export const CRT_EFFECT: EffectDefinition = {
   params: [
     { key: "scanlineIntensity", label: "Scanlines", type: "float", default: 0.35, min: 0, max: 1, step: 0.01, group: "Scanlines" },
     { key: "scanlineCount", label: "Scanline Density", type: "int", default: 480, min: 60, max: 1080, step: 1, group: "Scanlines" },
+    { key: "scanlineSpeed", label: "Scanline Scroll", type: "float", default: 0, min: -1, max: 1, step: 0.01, group: "Scanlines" },
     { key: "curvature", label: "Barrel Distortion", type: "float", default: 0.15, min: 0, max: 1, step: 0.01, group: "Geometry" },
     { key: "vignette", label: "Vignette", type: "float", default: 0.3, min: 0, max: 1, step: 0.01, group: "Geometry" },
     { key: "noise", label: "Noise", type: "float", default: 0.05, min: 0, max: 1, step: 0.01, group: "Signal" },

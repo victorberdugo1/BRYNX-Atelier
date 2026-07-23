@@ -38,8 +38,8 @@ SHELL_FILE := shell.html
 VIDEO_EXPORT := video_export.js
 
 # Functions/runtime methods React's wasmBridge.ts calls via Module.ccall(...)
-EXPORTED_FUNCS    := ['_js_set_effect_json','_js_get_stats_json','_js_start_export','_js_stop_export','_main']
-EXPORTED_RUNTIME  := ['ccall','cwrap']
+EXPORTED_FUNCS    := ['_js_set_effect_json','_js_get_stats_json','_js_start_export','_js_stop_export','_js_set_video_frame','_js_clear_video_frame','_js_set_canvas_size','_malloc','_free','_main']
+EXPORTED_RUNTIME  := ['ccall','cwrap','HEAPU8']
 
 DEST ?= ../public/wasm
 

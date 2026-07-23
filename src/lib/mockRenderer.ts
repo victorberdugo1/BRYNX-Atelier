@@ -301,6 +301,7 @@ export class MockRenderer {
 
     const scanlineIntensity = Number(this.params.scanlineIntensity ?? 0.35);
     const scanlineCount = Number(this.params.scanlineCount ?? 480);
+    const scanlineSpeed = Number(this.params.scanlineSpeed ?? 0);
     const noise = Number(this.params.noise ?? 0.05);
     const vignette = Number(this.params.vignette ?? 0.3);
     const flicker = Number(this.params.flicker ?? 0.1);
@@ -318,11 +319,13 @@ export class MockRenderer {
       ctx.globalAlpha = 1;
     }
 
-    // scanlines
+    // scanlines — scroll offset mirrors the shader's `uv.y - uTime * speed * 0.2`
+    // (fraction of screen height per second), just expressed in pixels here.
     const step = Math.max(1, h / scanlineCount);
+    const scrollPx = (((t / 1000) * scanlineSpeed * 0.2 * h) % (step * 2) + step * 2) % (step * 2);
     ctx.fillStyle = `rgba(0,0,0,${scanlineIntensity})`;
-    for (let y = 0; y < h; y += step * 2) {
-      ctx.fillRect(0, y, w, step);
+    for (let y = -step * 2; y < h + step * 2; y += step * 2) {
+      ctx.fillRect(0, y + scrollPx, w, step);
     }
 
     // noise

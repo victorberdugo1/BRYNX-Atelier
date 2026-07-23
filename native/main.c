@@ -36,6 +36,12 @@ static int g_frameCount = 0;
 static double g_lastStatsTime = 0.0;
 static float g_lastGpuFrameTimeMs = 0.0f;
 
+// Video-as-source-texture bridge state (see js_set_video_frame below).
+static Texture2D g_videoTexture;
+static bool g_videoTextureLoaded = false;
+static int g_videoTexW = 0;
+static int g_videoTexH = 0;
+
 // ============================================================================
 // PROCEDURAL BASE SCENE
 //
@@ -66,6 +72,17 @@ static void DrawWaveBand(int screenW, int screenH, float t, int i, int bands, Co
 
 static void DrawBaseScene(void) {
     ClearBackground((Color){ 0, 0, 0, 0 });
+
+    // When a video source is active, it IS the base scene — effects sample
+    // g_sceneTarget the same way they always did, they just receive decoded
+    // video pixels instead of the procedural wave placeholder.
+    if (g_videoTextureLoaded) {
+        Rectangle src = { 0, 0, (float)g_videoTexture.width, (float)g_videoTexture.height };
+        Rectangle dst = { 0, 0, (float)g_screenW, (float)g_screenH };
+        DrawTexturePro(g_videoTexture, src, dst, (Vector2){ 0, 0 }, 0.0f, WHITE);
+        return;
+    }
+
     float t = (float)GetTime();
 
     // Full-canvas vertical gradient background (no centered radial glow).
@@ -133,6 +150,78 @@ EMSCRIPTEN_KEEPALIVE
 #endif
 void js_stop_export(void) {
     VideoExportStop();
+}
+
+// Called when the canvas should switch to a different internal render
+// resolution — currently only from ViewportCanvas when a video is
+// loaded/cleared, so the scene (and every effect, which all receive
+// screenW/screenH per-frame and resize their own buffers off that) renders
+// at the video's native resolution instead of the fixed startup size.
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void js_set_canvas_size(int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    if (width == g_screenW && height == g_screenH) return;
+
+    g_screenW = width;
+    g_screenH = height;
+
+    // Resizes the GL viewport and, on PLATFORM_WEB, the backing <canvas>
+    // element itself (emscripten_set_canvas_element_size) — matches
+    // whatever ViewportCanvas.tsx just set canvas.width/height to.
+    SetWindowSize(g_screenW, g_screenH);
+
+    UnloadRenderTexture(g_sceneTarget);
+    g_sceneTarget = LoadRenderTexture(g_screenW, g_screenH);
+}
+
+// Called once per displayed video frame from wasmBridge.ts (setSourceFrames /
+// setSourceFrameIndex), same trigger the MockRenderer path already used.
+// `rgba` is a tightly-packed width*height*4 RGBA8 buffer that wasmBridge.ts
+// malloc'd on the wasm heap and will free right after this call returns, so
+// it must be consumed synchronously here — which LoadTextureFromImage /
+// UpdateTexture do.
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void js_set_video_frame(const unsigned char *rgba, int width, int height) {
+    if (!rgba || width <= 0 || height <= 0) return;
+
+    if (g_videoTextureLoaded && (width != g_videoTexW || height != g_videoTexH)) {
+        UnloadTexture(g_videoTexture);
+        g_videoTextureLoaded = false;
+    }
+
+    if (!g_videoTextureLoaded) {
+        Image img = {
+            .data = (void *)rgba,
+            .width = width,
+            .height = height,
+            .mipmaps = 1,
+            .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+        };
+        g_videoTexture = LoadTextureFromImage(img);
+        g_videoTexW = width;
+        g_videoTexH = height;
+        g_videoTextureLoaded = true;
+    } else {
+        UpdateTexture(g_videoTexture, rgba);
+    }
+}
+
+// Called when the video is removed ("Quitar video") so DrawBaseScene falls
+// back to the procedural wave placeholder instead of the last decoded frame.
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void js_clear_video_frame(void) {
+    if (g_videoTextureLoaded) {
+        UnloadTexture(g_videoTexture);
+        g_videoTextureLoaded = false;
+    }
+    g_videoTexW = 0;
+    g_videoTexH = 0;
 }
 
 // ============================================================================
@@ -215,6 +304,7 @@ int main(void) {
 #endif
 
     VideoExportCleanup();
+    if (g_videoTextureLoaded) UnloadTexture(g_videoTexture);
     CrtEffect_Unload();
     AsciiEffect_Unload();
     UnloadRenderTexture(g_sceneTarget);

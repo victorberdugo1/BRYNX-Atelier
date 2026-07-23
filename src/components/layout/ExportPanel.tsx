@@ -24,6 +24,15 @@ interface ExportPanelProps {
   trigger: React.ReactNode;
 }
 
+// rAF as a promise — one tick of the browser's paint loop.
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export function ExportPanel({ trigger }: ExportPanelProps) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<ExportFormat>("mp4");
@@ -33,25 +42,16 @@ export function ExportPanel({ trigger }: ExportPanelProps) {
   const finishExport = useAppStore((s) => s.finishExport);
   const cancelExport = useAppStore((s) => s.cancelExport);
   const timeline = useAppStore((s) => s.timeline);
+  const setPlaying = useAppStore((s) => s.setPlaying);
+  const setCurrentFrame = useAppStore((s) => s.setCurrentFrame);
+  const videoFrameCount = useAppStore((s) => s.video.frames?.length ?? 0);
 
-  const intervalRef = useRef<number | null>(null);
-  const timeoutRef = useRef<number | null>(null);
-
-  function clearTimers() {
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    if (timeoutRef.current !== null) {
-      window.clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  }
+  const runIdRef = useRef(0);
 
   // stop any in-flight recording if the component unmounts mid-export
   useEffect(() => {
     return () => {
-      clearTimers();
+      runIdRef.current += 1; // invalidate any in-flight export loop
       if (useAppStore.getState().exportJob.running) {
         wasmBridge.cancelRecording();
       }
@@ -68,8 +68,13 @@ export function ExportPanel({ trigger }: ExportPanelProps) {
       return;
     }
 
-    const totalFrames = Math.max(1, Math.round(timeline.durationSeconds * timeline.fps));
-    const durationMs = timeline.durationSeconds * 1000;
+    const runId = ++runIdRef.current;
+    const hasVideo = videoFrameCount > 0;
+    const totalFrames = hasVideo
+      ? videoFrameCount
+      : Math.max(1, Math.round(timeline.durationSeconds * timeline.fps));
+    const isSnapshotFormat = format === "png-sequence" || format === "mov-alpha";
+    const frameIntervalMs = Math.max(1, 1000 / Math.max(1, timeline.fps));
 
     startExport(format, totalFrames);
     const started = await wasmBridge.startRecording(canvas.width, canvas.height, timeline.fps, format);
@@ -78,35 +83,70 @@ export function ExportPanel({ trigger }: ExportPanelProps) {
       return;
     }
 
-    const start = performance.now();
-    const frameStepMs = Math.max(100, 1000 / Math.max(1, timeline.fps));
-    intervalRef.current = window.setInterval(() => {
-      if (!useAppStore.getState().exportJob.running) {
-        clearTimers();
-        return;
-      }
-      const elapsed = performance.now() - start;
-      const frame = Math.min(totalFrames, Math.round((elapsed / durationMs) * totalFrames));
-      const eta = Math.max(0, (durationMs - elapsed) / 1000);
-      updateExportProgress(frame, eta);
-    }, frameStepMs);
+    // Freeze the timeline's own playback loop while we drive currentFrame
+    // ourselves — otherwise both would fight over it and frames would skip
+    // or repeat unpredictably.
+    const wasPlaying = timeline.playing;
+    if (hasVideo) setPlaying(false);
 
-    timeoutRef.current = window.setTimeout(async () => {
-      clearTimers();
-      if (!useAppStore.getState().exportJob.running) return; // cancelled meanwhile
+    const stillCurrent = () => runIdRef.current === runId && useAppStore.getState().exportJob.running;
+
+    try {
+      if (hasVideo) {
+        // Deterministic export: step through every imported video frame one
+        // by one (independent of real time), so ALL frames get rendered
+        // with the effect and captured — not just whatever frame happened
+        // to be showing when Export was clicked.
+        for (let i = 0; i < totalFrames; i++) {
+          if (!stillCurrent()) return;
+          setCurrentFrame(i);
+          // Give the renderer (wasm module or mock) a couple of paint ticks
+          // to actually push the new video texture and draw it before we
+          // grab the canvas.
+          await nextFrame();
+          await nextFrame();
+          if (isSnapshotFormat) {
+            await wasmBridge.captureFrame();
+          } else {
+            // mp4/webm: MediaRecorder samples the live canvas stream, so the
+            // frame needs to stay on screen long enough to actually get
+            // grabbed at the target fps.
+            await sleep(frameIntervalMs);
+          }
+          updateExportProgress(i + 1, ((totalFrames - i - 1) * frameIntervalMs) / 1000);
+        }
+      } else {
+        // No source video: the effect animates on its own real-time clock
+        // (particles/CRT/etc. inside the wasm render loop), so just let it
+        // run for the timeline's configured duration, snapshotting along
+        // the way for the frame-by-frame formats.
+        const start = performance.now();
+        const durationMs = timeline.durationSeconds * 1000;
+        while (performance.now() - start < durationMs) {
+          if (!stillCurrent()) return;
+          if (isSnapshotFormat) await wasmBridge.captureFrame();
+          const elapsed = performance.now() - start;
+          const frame = Math.min(totalFrames, Math.round((elapsed / durationMs) * totalFrames));
+          updateExportProgress(frame, Math.max(0, (durationMs - elapsed) / 1000));
+          await sleep(frameIntervalMs);
+        }
+      }
+
+      if (!stillCurrent()) return;
       updateExportProgress(totalFrames, 0);
       const filename = format === "mp4" ? "export.mp4" : format === "webm" ? "export.webm" : format === "mov-alpha" ? "export.mov" : "export.png";
-      try {
-        await wasmBridge.stopRecording(filename);
-      } catch (err) {
-        console.error("[ExportPanel] stopRecording failed:", err);
-      }
+      await wasmBridge.stopRecording(filename);
       finishExport();
-    }, durationMs);
+    } catch (err) {
+      console.error("[ExportPanel] export failed:", err);
+      if (runIdRef.current === runId) cancelExport();
+    } finally {
+      if (hasVideo && runIdRef.current === runId) setPlaying(wasPlaying);
+    }
   }
 
   function handleCancel() {
-    clearTimers();
+    runIdRef.current += 1;
     wasmBridge.cancelRecording();
     cancelExport();
   }

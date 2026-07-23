@@ -4,6 +4,7 @@
 typedef struct {
     float scanlineIntensity;
     float scanlineCount;
+    float scanlineSpeed;
     float curvature;
     float vignette;
     float noise;
@@ -14,6 +15,7 @@ typedef struct {
 static CrtParams g_params = {
     .scanlineIntensity = 0.35f,
     .scanlineCount = 480.0f,
+    .scanlineSpeed = 0.0f,
     .curvature = 0.15f,
     .vignette = 0.3f,
     .noise = 0.05f,
@@ -26,7 +28,7 @@ static bool g_shaderLoaded = false;
 static float g_time = 0.0f;
 
 // Uniform locations, cached after LoadShaderFromMemory.
-static int g_locTime, g_locScanlineIntensity, g_locScanlineCount, g_locCurvature;
+static int g_locTime, g_locScanlineIntensity, g_locScanlineCount, g_locScanlineSpeed, g_locCurvature;
 static int g_locVignette, g_locNoise, g_locAberration, g_locFlicker;
 
 // Embedded verbatim from assets/shaders/crt.fs. Loaded from memory instead of
@@ -52,6 +54,7 @@ static const char *CRT_FS_SOURCE =
     "uniform float uTime;\n"
     "uniform float uScanlineIntensity;\n"
     "uniform float uScanlineCount;\n"
+    "uniform float uScanlineSpeed;\n"
     "uniform float uCurvature;\n"
     "uniform float uVignette;\n"
     "uniform float uNoise;\n"
@@ -84,7 +87,8 @@ static const char *CRT_FS_SOURCE =
     "    vec3 color = vec3(r, g, b);\n"
     "    float srcAlpha = centerSample.a;\n"
     "\n"
-    "    float scan = sin(uv.y * uScanlineCount * 3.14159) * 0.5 + 0.5;\n"
+    "    float scanY = uv.y - uTime * uScanlineSpeed * 0.2;\n"
+    "    float scan = sin(scanY * uScanlineCount * 3.14159) * 0.5 + 0.5;\n"
     "    color *= mix(1.0, scan, uScanlineIntensity);\n"
     "\n"
     "    float n = (rand(uv * uTime) - 0.5) * uNoise;\n"
@@ -110,6 +114,7 @@ void CrtEffect_Init(void) {
     g_locTime               = GetShaderLocation(g_shader, "uTime");
     g_locScanlineIntensity  = GetShaderLocation(g_shader, "uScanlineIntensity");
     g_locScanlineCount      = GetShaderLocation(g_shader, "uScanlineCount");
+    g_locScanlineSpeed      = GetShaderLocation(g_shader, "uScanlineSpeed");
     g_locCurvature          = GetShaderLocation(g_shader, "uCurvature");
     g_locVignette           = GetShaderLocation(g_shader, "uVignette");
     g_locNoise              = GetShaderLocation(g_shader, "uNoise");
@@ -121,6 +126,7 @@ void CrtEffect_SetParams(const JsonValue *paramsObj) {
     if (!paramsObj) return;
     g_params.scanlineIntensity  = (float)JsonAsNumber(JsonObjectGet(paramsObj, "scanlineIntensity"), g_params.scanlineIntensity);
     g_params.scanlineCount      = (float)JsonAsNumber(JsonObjectGet(paramsObj, "scanlineCount"), g_params.scanlineCount);
+    g_params.scanlineSpeed      = (float)JsonAsNumber(JsonObjectGet(paramsObj, "scanlineSpeed"), g_params.scanlineSpeed);
     g_params.curvature          = (float)JsonAsNumber(JsonObjectGet(paramsObj, "curvature"), g_params.curvature);
     g_params.vignette           = (float)JsonAsNumber(JsonObjectGet(paramsObj, "vignette"), g_params.vignette);
     g_params.noise              = (float)JsonAsNumber(JsonObjectGet(paramsObj, "noise"), g_params.noise);
@@ -148,6 +154,7 @@ void CrtEffect_Draw(RenderTexture2D scene, int screenW, int screenH) {
     SetShaderValue(g_shader, g_locTime, &g_time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(g_shader, g_locScanlineIntensity, &g_params.scanlineIntensity, SHADER_UNIFORM_FLOAT);
     SetShaderValue(g_shader, g_locScanlineCount, &g_params.scanlineCount, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(g_shader, g_locScanlineSpeed, &g_params.scanlineSpeed, SHADER_UNIFORM_FLOAT);
     SetShaderValue(g_shader, g_locCurvature, &g_params.curvature, SHADER_UNIFORM_FLOAT);
     SetShaderValue(g_shader, g_locVignette, &g_params.vignette, SHADER_UNIFORM_FLOAT);
     SetShaderValue(g_shader, g_locNoise, &g_params.noise, SHADER_UNIFORM_FLOAT);

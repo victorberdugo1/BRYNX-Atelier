@@ -10,6 +10,7 @@ interface EmscriptenModule {
   canvas: HTMLCanvasElement;
   onRuntimeInitialized?: () => void;
   ccall: (name: string, ret: string, args: string[], vals: unknown[]) => unknown;
+  HEAPU8?: Uint8Array;
 }
 
 declare global {
@@ -47,6 +48,13 @@ class WasmBridge {
   // wasm and mock mode — so it's loaded independently of doAttach()'s
   // wasm/mock branching, and memoized the same way for the same reason.
   private videoExportPromise: Promise<boolean> | null = null;
+  // Source-video frames (see ViewportCanvas's videoFrames effect). In wasm
+  // mode these never reach MockRenderer, so this bridge owns its own copy
+  // plus the scratch canvas used to decode each ImageBitmap into RGBA8
+  // before handing it to js_set_video_frame.
+  private videoFrames: ImageBitmap[] | null = null;
+  private videoFrameCanvas: HTMLCanvasElement | null = null;
+  private videoFrameCtx: CanvasRenderingContext2D | null = null;
 
   get isReady() {
     return this.ready;
@@ -146,6 +154,77 @@ class WasmBridge {
 
   updateParams(effect: RenderMessage["effect"], params: EffectParams) {
     this.sendEffect({ effect, params });
+  }
+
+  get hasVideoFrames() {
+    return !!this.videoFrames?.length;
+  }
+
+  /** Resizes the wasm module's internal render resolution (RenderTexture +
+   * GL viewport + backing canvas element) — a no-op outside wasm mode or
+   * before the module is ready. Call this any time the <canvas> element's
+   * width/height attributes change, so the two stay in sync. */
+  setCanvasSize(width: number, height: number) {
+    if (this.mode !== "wasm" || !this.module?.ccall || width <= 0 || height <= 0) return;
+    this.module.ccall("js_set_canvas_size", "void", ["number", "number"], [width, height]);
+  }
+
+  /** Wasm-mode counterpart of MockRenderer.setSourceFrames — called from
+   * ViewportCanvas whenever a video is loaded/cleared. */
+  setVideoFrames(frames: ImageBitmap[] | null) {
+    this.videoFrames = frames && frames.length ? frames : null;
+    if (!this.videoFrames && this.mode === "wasm" && this.module) {
+      this.module.ccall?.("js_clear_video_frame", "void", [], []);
+    }
+  }
+
+  /** Wasm-mode counterpart of MockRenderer.setSourceFrameIndex — decodes one
+   * ImageBitmap to RGBA8 and pushes it into the native texture via
+   * js_set_video_frame. Called once per timeline tick from ViewportCanvas. */
+  setVideoFrameIndex(index: number) {
+    if (this.mode !== "wasm" || !this.module || !this.videoFrames?.length) return;
+    const n = this.videoFrames.length;
+    const clamped = ((index % n) + n) % n;
+    const bitmap = this.videoFrames[clamped];
+    if (!bitmap) return;
+
+    if (!this.videoFrameCanvas) {
+      this.videoFrameCanvas = document.createElement("canvas");
+      this.videoFrameCtx = this.videoFrameCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    const canvas = this.videoFrameCanvas;
+    const ctx = this.videoFrameCtx;
+    if (!ctx) return;
+
+    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+    }
+    ctx.drawImage(bitmap, 0, 0);
+    const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+
+    // ccall's "array" param type stack-allocates the buffer (stackAlloc) —
+    // the wasm stack is only a few hundred KB, nowhere near enough for a
+    // decoded video frame (e.g. 1280x720x4 ≈ 3.6MB RGBA), so it overflowed
+    // with "offset is out of bounds" / "memory access out of bounds".
+    // Heap-allocate instead: malloc a buffer, copy into it via HEAPU8,
+    // pass the pointer, then free it right after the (synchronous) call.
+    if (!this.module.HEAPU8) return;
+    const ccall = this.module.ccall;
+    if (!ccall) return;
+    const ptr = ccall("malloc", "number", ["number"], [data.byteLength]) as number;
+    if (!ptr) return;
+    try {
+      this.module.HEAPU8.set(data, ptr);
+      ccall(
+        "js_set_video_frame",
+        "void",
+        ["number", "number", "number"],
+        [ptr, bitmap.width, bitmap.height]
+      );
+    } finally {
+      ccall("free", "void", ["number"], [ptr]);
+    }
   }
 
   async startRecording(width: number, height: number, fps: number, format: ExportFormat): Promise<boolean> {
@@ -257,6 +336,7 @@ class WasmBridge {
     this.exportCaptureHandle = null;
     this.exportActive = false;
     this.statsListeners.clear();
+    this.videoFrames = null;
   }
 }
 
